@@ -32,6 +32,7 @@ const state = {
   flash: new Map(),
   removing: new Map(),
   frozen: false,
+  seenReads: new Set(),   // dedupe key per logged read (survives reconnects)
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -458,8 +459,20 @@ $("#feed-toggle").addEventListener("click", () => {
   $("#feed-toggle").textContent = $("#feed").classList.contains("collapsed") ? "+" : "–";
 });
 
+function readKey(r) {
+  return `${r.ts || ""}|${r.kind || ""}|${r.graph || ""}|${r.question || ""}`;
+}
+
 function feedCard(r) {
   const list = $("#feed-list");
+  // An SSE reconnect replays recent history; never log the same read twice.
+  // Only real reads carry a ts from the query log; synthetic update cards do
+  // not participate in dedupe.
+  if (r.ts && r.kind !== "update") {
+    const key = readKey(r);
+    if (state.seenReads.has(key)) return;
+    state.seenReads.add(key);
+  }
   const card = document.createElement("div");
   card.className = "card";
   const kind = r.kind || "query";
@@ -499,8 +512,12 @@ function connect() {
   es.addEventListener("hello", (e) => {
     $("#conn").textContent = "live";
     $("#conn").style.color = "#43b581";
-    const graphs = JSON.parse(e.data).graphs || [];
+    const payload = JSON.parse(e.data);
+    const graphs = payload.graphs || [];
     refreshSelect(graphs);
+    // Backfill the Activity feed with recent reads so it is not empty on open
+    // (oldest first, so the newest ends up on top after prepending).
+    for (const r of payload.recent_reads || []) feedCard(r);
     if (!state.gid && graphs.length) {
       // Open on the merged global graph (aggregated overview) by default.
       const prefer = graphs.find((g) => g.id === DEFAULT_GRAPH) || graphs[0];

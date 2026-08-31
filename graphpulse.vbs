@@ -6,7 +6,9 @@
 '   wscript.exe graphpulse.vbs /nobrowser -> start server only (Startup use)
 Option Explicit
 
-Dim PORT, URL, APPDIR, SHELL, FSO, args, openBrowser, i
+Dim PORT, URL, APPDIR, SHELL, FSO, openBrowser, i
+Dim logPath, pyExe, batPath, bat, bf, tries, msg, ts, tailTxt
+Dim lines, ln
 PORT = 8123
 URL = "http://127.0.0.1:" & PORT & "/"
 
@@ -20,16 +22,28 @@ For i = 0 To WScript.Arguments.Count - 1
 Next
 
 ' --- is the server already up? ---
+' Probes the TCP port directly. An HTTP probe through MSXML is unreliable here:
+' it can return success from a proxy/cached handler even when nothing is
+' listening on 127.0.0.1:PORT, which made the launcher think the server was
+' already running and silently do nothing.
 Function ServerIsUp()
-  Dim http
+  Dim exec, out
   ServerIsUp = False
   On Error Resume Next
-  Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-  http.setTimeouts 800, 800, 1500, 1500
-  http.Open "GET", URL & "api/graphs", False
-  http.Send
-  If Err.Number = 0 And http.Status = 200 Then ServerIsUp = True
+  Set exec = SHELL.Exec("netstat -ano -p TCP")
+  If Err.Number <> 0 Then
+    On Error GoTo 0
+    Exit Function
+  End If
+  out = exec.StdOut.ReadAll
   On Error GoTo 0
+  lines = Split(out, vbCrLf)
+  For Each ln In lines
+    If InStr(ln, "127.0.0.1:" & PORT & " ") > 0 And InStr(ln, "LISTENING") > 0 Then
+      ServerIsUp = True
+      Exit For
+    End If
+  Next
 End Function
 
 ' --- resolve a python that exists on this machine ---
@@ -57,20 +71,46 @@ Function PythonExe()
 End Function
 
 If Not ServerIsUp() Then
-  Dim cmd
-  cmd = """" & PythonExe() & """ """ & APPDIR & "\server.py"" --port " & PORT & _
-        " --roots ""D:/Hermes;D:/AI"""
+  logPath = APPDIR & "\server.log"
+  pyExe = PythonExe()
+
+  ' Write a tiny launcher .bat instead of fighting cmd.exe quoting rules from
+  ' VBScript (a mis-paired quote there fails silently: no process, no log).
+  ' The bat redirects stdout+stderr, so a crash always leaves a trace.
+  batPath = APPDIR & "\.launch-server.bat"
+  bat = "@echo off" & vbCrLf & _
+        "cd /d " & Chr(34) & APPDIR & Chr(34) & vbCrLf & _
+        Chr(34) & pyExe & Chr(34) & " " & Chr(34) & APPDIR & "\server.py" & Chr(34) & _
+        " --port " & PORT & " --roots " & Chr(34) & "D:/Hermes;D:/AI" & Chr(34) & _
+        " > " & Chr(34) & logPath & Chr(34) & " 2>&1" & vbCrLf
+  Set bf = FSO.CreateTextFile(batPath, True)
+  bf.Write bat
+  bf.Close
+
   ' 0 = hidden window, False = do not wait
-  SHELL.Run cmd, 0, False
+  SHELL.Run Chr(34) & batPath & Chr(34), 0, False
 
   ' wait (max ~20 s) for it to accept connections before opening the browser
-  Dim tries
   tries = 0
   Do While tries < 40
     WScript.Sleep 500
     If ServerIsUp() Then Exit Do
     tries = tries + 1
   Loop
+
+  If Not ServerIsUp() Then
+    ' Surface the failure instead of exiting quietly.
+    msg = "GraphPulse could not start. See " & logPath
+    If FSO.FileExists(logPath) Then
+      Set ts = FSO.OpenTextFile(logPath, 1)
+      tailTxt = ts.ReadAll
+      ts.Close
+      If Len(tailTxt) > 600 Then tailTxt = Right(tailTxt, 600)
+      msg = msg & vbCrLf & vbCrLf & tailTxt
+    End If
+    If openBrowser Then MsgBox msg, 16, "GraphPulse"
+    WScript.Quit 1
+  End If
 End If
 
 If openBrowser Then SHELL.Run URL, 1, False

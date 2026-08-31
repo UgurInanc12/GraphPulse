@@ -404,12 +404,21 @@ class QueryLogTail(threading.Thread):
         self.path = path
         self.registry = registry
         self.poll = poll
+        # Ring buffer of the most recent emitted events, so a page that opens
+        # (or reconnects) is not stuck with an empty Activity feed until the
+        # next query happens.
+        self.recent: list[dict] = []
+        self._recent_lock = threading.Lock()
         # Skip only history that predates the server; a file that appears
         # later is entirely live and must be read from offset 0.
         try:
             self.pos = self.path.stat().st_size
         except OSError:
             self.pos = 0
+
+    def history(self, limit: int = 30) -> list[dict]:
+        with self._recent_lock:
+            return list(self.recent[-limit:])
 
     def run(self) -> None:
         while True:
@@ -474,20 +483,21 @@ class QueryLogTail(threading.Thread):
                     if aid and aid not in seen_agg:
                         seen_agg.add(aid)
                         agg_ids.append(aid)
-        BUS.publish(
-            "read",
-            {
-                "graph": gid,
-                "kind": rec.get("kind"),
-                "question": rec.get("question"),
-                "ts": rec.get("ts"),
-                "nodes_returned": rec.get("nodes_returned"),
-                "duration_ms": rec.get("duration_ms"),
-                "labels": labels[:25],
-                "node_ids": node_ids[:60],
-                "agg_ids": agg_ids[:30],
-            },
-        )
+        payload = {
+            "graph": gid,
+            "kind": rec.get("kind"),
+            "question": rec.get("question"),
+            "ts": rec.get("ts"),
+            "nodes_returned": rec.get("nodes_returned"),
+            "duration_ms": rec.get("duration_ms"),
+            "labels": labels[:25],
+            "node_ids": node_ids[:60],
+            "agg_ids": agg_ids[:30],
+        }
+        with self._recent_lock:
+            self.recent.append(payload)
+            del self.recent[:-60]
+        BUS.publish("read", payload)
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +507,7 @@ class QueryLogTail(threading.Thread):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     registry: Registry = None  # type: ignore[assignment]
+    tail: "QueryLogTail | None" = None
 
     def log_message(self, fmt: str, *args) -> None:  # quiet
         pass
@@ -527,6 +538,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # The frontend is edited live; without this the browser keeps serving a
+        # stale app.js from cache and fixes appear to have no effect.
+        self.send_header("Cache-Control", "no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
@@ -617,7 +631,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            hello = json.dumps({"graphs": self.registry.listing()})
+            hello = json.dumps({
+                "graphs": self.registry.listing(),
+                "recent_reads": self.tail.history() if self.tail else [],
+            })
             self.wfile.write(f"event: hello\ndata: {hello}\n\n".encode())
             self.wfile.flush()
             while True:
@@ -680,9 +697,11 @@ def main() -> None:
                 pass
 
     threading.Thread(target=watch, daemon=True, name="graph-watch").start()
-    QueryLogTail(Path(args.querylog), registry).start()
 
     Handler.registry = registry
+    tail = QueryLogTail(Path(args.querylog), registry)
+    Handler.tail = tail
+    tail.start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"GraphPulse: http://{args.host}:{args.port}  "
           f"({len(registry.listing())} graphs, querylog={args.querylog})")

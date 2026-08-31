@@ -8,3 +8,7 @@ __pycache__/
 
 # local scratch
 *.log
+
+# launcher scratch
+.launch-server.bat
+server.log
