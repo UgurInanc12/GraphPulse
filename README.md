@@ -15,6 +15,11 @@ you work.
 - **Full 3D navigation**: rotate (left drag), pan (right drag), zoom (wheel), click a node for a
   side panel with its file, location, community, and clickable neighbors. Search flies the camera
   to any node.
+- **Scales to huge graphs**: anything over 6000 nodes is served as a repo x community
+  **aggregate overview** (the 35k-node global graph renders at 70+ fps). Click a super-node
+  (or search a symbol) to drill into that community at full detail; a breadcrumb takes you back.
+  Physics is pre-warmed and frozen for big views, and an FPS chip in the top bar keeps the
+  renderer honest.
 - **Multi-project**: a selector lists every discovered graph; switch without restarting.
 
 No build step, no npm, no external Python packages. One stdlib server, one vendored
