@@ -59,8 +59,23 @@ html, body {
 #search:focus { outline: 1px solid var(--accent); }
 
 #stats { margin-left: auto; white-space: nowrap; }
+#fps { min-width: 52px; text-align: right; }
 #conn { min-width: 70px; text-align: right; }
 .muted { color: var(--muted); }
+
+/* breadcrumb chips (agg/focus modes) */
+#crumb { display: flex; gap: 6px; align-items: center; }
+.chip {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.chip.btn { cursor: pointer; color: var(--text); }
+.chip.btn:hover { border-color: var(--accent); }
 
 /* ---- shared panel chrome ---- */
 .panel-head {

@@ -23,6 +23,10 @@ from urllib.parse import unquote, urlparse
 APP_DIR = Path(__file__).resolve().parent
 FRONTEND = APP_DIR / "frontend"
 
+# Graphs larger than this are served aggregated (repo x community super-nodes)
+# unless the client explicitly asks for mode=full.
+AGG_THRESHOLD = 6000
+
 # ---------------------------------------------------------------------------
 # Event bus
 
@@ -79,6 +83,113 @@ def _load_graph(path: Path) -> dict | None:
     return {"nodes": nodes, "edges": edges, "directed": bool(data.get("directed"))}
 
 
+# mtime-keyed cache so big graphs (global: ~50 MB JSON) are not re-parsed
+# on every API hit.
+_GRAPH_CACHE: dict[str, tuple[float, dict]] = {}
+_GRAPH_CACHE_LOCK = threading.Lock()
+
+
+def _load_graph_cached(path: Path) -> dict | None:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    key = str(path)
+    with _GRAPH_CACHE_LOCK:
+        hit = _GRAPH_CACHE.get(key)
+        if hit and hit[0] == mtime:
+            return hit[1]
+    graph = _load_graph(path)
+    if graph is not None:
+        with _GRAPH_CACHE_LOCK:
+            _GRAPH_CACHE[key] = (mtime, graph)
+            while len(_GRAPH_CACHE) > 6:  # keep the working set small
+                _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)))
+    return graph
+
+
+def _agg_key(n: dict) -> str:
+    return f"{n.get('repo') or ''}|{n.get('community', '')}"
+
+
+def aggregate_graph(graph: dict) -> dict:
+    """Collapse nodes into (repo, community) super-nodes.
+
+    Turns the 32k-node global graph into a few hundred renderable objects.
+    """
+    groups: dict[str, dict] = {}
+    member_of: dict[str, str] = {}
+    for n in graph["nodes"]:
+        key = _agg_key(n)
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {
+                "id": key,
+                "repo": n.get("repo") or "",
+                "community": n.get("community", ""),
+                "community_name": n.get("community_name") or "",
+                "count": 0,
+                "top": [],  # a few sample labels for the tooltip
+            }
+        g["count"] += 1
+        if len(g["top"]) < 5 and n.get("label"):
+            g["top"].append(n["label"])
+        member_of[n.get("id")] = key
+
+    agg_edges: dict[tuple[str, str], int] = {}
+    for e in graph["edges"]:
+        s = member_of.get(e.get("source") if not isinstance(e.get("source"), dict) else e["source"].get("id"))
+        t = member_of.get(e.get("target") if not isinstance(e.get("target"), dict) else e["target"].get("id"))
+        if not s or not t or s == t:
+            continue
+        k = (s, t) if s <= t else (t, s)
+        agg_edges[k] = agg_edges.get(k, 0) + 1
+
+    for g in groups.values():
+        g["label"] = (
+            f"{g['repo'] or 'graph'} · "
+            + (g["community_name"] or f"community {g['community']}")
+        )
+    return {
+        "mode": "agg",
+        "nodes": list(groups.values()),
+        "edges": [
+            {"source": s, "target": t, "weight": w}
+            for (s, t), w in agg_edges.items()
+        ],
+    }
+
+
+def focus_graph(graph: dict, agg_id: str) -> dict:
+    """Full detail for one (repo, community) group + one hop of neighbors."""
+    members = {n.get("id") for n in graph["nodes"] if _agg_key(n) == agg_id}
+    keep_nodes: dict[str, dict] = {}
+    keep_edges: list[dict] = []
+    for e in graph["edges"]:
+        s, t = e.get("source"), e.get("target")
+        s = s.get("id") if isinstance(s, dict) else s
+        t = t.get("id") if isinstance(t, dict) else t
+        if s in members or t in members:
+            keep_edges.append(e)
+    wanted = set(members)
+    for e in keep_edges:
+        s, t = e.get("source"), e.get("target")
+        s = s.get("id") if isinstance(s, dict) else s
+        t = t.get("id") if isinstance(t, dict) else t
+        wanted.add(s)
+        wanted.add(t)
+    for n in graph["nodes"]:
+        nid = n.get("id")
+        if nid in wanted:
+            keep_nodes[nid] = dict(n, _in_focus=nid in members)
+    return {
+        "mode": "focus",
+        "focus": agg_id,
+        "nodes": list(keep_nodes.values()),
+        "edges": keep_edges,
+    }
+
+
 class GraphEntry:
     def __init__(self, gid: str, path: Path):
         self.gid = gid
@@ -90,6 +201,8 @@ class GraphEntry:
         self.node_count = 0
         self.edge_count = 0
         self.label_to_id: dict[str, str] = {}
+        # id -> (repo, community) for aggregate views / read mapping
+        self.node_meta: dict[str, tuple[str, str]] = {}
 
     def snapshot_sets(self, graph: dict) -> None:
         self.node_ids = {n.get("id") for n in graph["nodes"]}
@@ -100,11 +213,23 @@ class GraphEntry:
         self.node_count = len(graph["nodes"])
         self.edge_count = len(graph["edges"])
         lbl: dict[str, str] = {}
+        meta: dict[str, tuple[str, str]] = {}
         for n in graph["nodes"]:
             for key in (n.get("label"), n.get("norm_label")):
                 if key:
                     lbl.setdefault(str(key).lower(), n.get("id"))
+            meta[n.get("id")] = (
+                str(n.get("repo") or ""),
+                str(n.get("community", "")),
+            )
         self.label_to_id = lbl
+        self.node_meta = meta
+
+    def agg_id_for(self, node_id: str) -> str | None:
+        m = self.node_meta.get(node_id)
+        if m is None:
+            return None
+        return f"{m[0]}|{m[1]}"
 
 
 class Registry:
@@ -337,12 +462,18 @@ class QueryLogTail(threading.Thread):
             str(rec.get("kind") or ""), str(rec.get("response") or "")
         )
         node_ids: list[str] = []
+        agg_ids: list[str] = []
         entry = self.registry.get(gid) if gid else None
         if entry:
+            seen_agg: set[str] = set()
             for lbl in labels:
                 nid = entry.label_to_id.get(lbl.lower())
                 if nid:
                     node_ids.append(nid)
+                    aid = entry.agg_id_for(nid)
+                    if aid and aid not in seen_agg:
+                        seen_agg.add(aid)
+                        agg_ids.append(aid)
         BUS.publish(
             "read",
             {
@@ -354,6 +485,7 @@ class QueryLogTail(threading.Thread):
                 "duration_ms": rec.get("duration_ms"),
                 "labels": labels[:25],
                 "node_ids": node_ids[:60],
+                "agg_ids": agg_ids[:30],
             },
         )
 
@@ -368,6 +500,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args) -> None:  # quiet
         pass
+
+    def handle(self) -> None:
+        # Swallow client disconnects (SSE tabs closing) instead of letting
+        # socketserver print a full traceback for each one.
+        try:
+            super().handle()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            pass
 
     def _send_json(self, obj: dict, status: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -406,24 +546,64 @@ class Handler(BaseHTTPRequestHandler):
             )
         elif route == "/api/graphs":
             self._send_json({"graphs": self.registry.listing()})
-        elif route.startswith("/api/graph/"):
-            gid = route[len("/api/graph/"):]
+        elif route.startswith("/api/find/"):
+            # /api/find/<gid>?q=label  -> node + its agg group (for search in agg mode)
+            gid = route[len("/api/find/"):]
             entry = self.registry.get(gid)
             if not entry:
                 self._send_json({"error": f"unknown graph {gid!r}"}, 404)
                 return
-            graph = _load_graph(entry.path)
+            from urllib.parse import parse_qs
+            q = (parse_qs(parsed.query).get("q") or [""])[0].strip().lower()
+            if not q:
+                self._send_json({"error": "missing q"}, 400)
+                return
+            graph = _load_graph_cached(entry.path)
             if graph is None:
                 self._send_json({"error": "graph unreadable"}, 503)
                 return
-            self._send_json(
-                {
-                    "id": gid,
-                    "directed": graph["directed"],
-                    "nodes": graph["nodes"],
-                    "edges": graph["edges"],
-                }
-            )
+            exact, partial = None, None
+            for n in graph["nodes"]:
+                lbl = str(n.get("label") or "").lower()
+                if lbl == q:
+                    exact = n
+                    break
+                if partial is None and q in lbl:
+                    partial = n
+            n = exact or partial
+            if not n:
+                self._send_json({"found": False})
+                return
+            self._send_json({"found": True, "node": n, "agg_id": _agg_key(n)})
+        elif route.startswith("/api/graph/"):
+            gid = unquote(route[len("/api/graph/"):])
+            entry = self.registry.get(gid)
+            if not entry:
+                self._send_json({"error": f"unknown graph {gid!r}"}, 404)
+                return
+            graph = _load_graph_cached(entry.path)
+            if graph is None:
+                self._send_json({"error": "graph unreadable"}, 503)
+                return
+            from urllib.parse import parse_qs
+            params = parse_qs(parsed.query)
+            focus = (params.get("focus") or [None])[0]
+            mode = (params.get("mode") or [None])[0]
+            n_nodes = len(graph["nodes"])
+            if focus:
+                self._send_json(dict(focus_graph(graph, unquote(focus)), id=gid))
+            elif mode == "full" or (mode != "agg" and n_nodes <= AGG_THRESHOLD):
+                self._send_json(
+                    {
+                        "id": gid,
+                        "mode": "full",
+                        "directed": graph["directed"],
+                        "nodes": graph["nodes"],
+                        "edges": graph["edges"],
+                    }
+                )
+            else:
+                self._send_json(dict(aggregate_graph(graph), id=gid, total_nodes=n_nodes))
         elif route == "/events":
             self._sse()
         else:

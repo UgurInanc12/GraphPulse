@@ -1,0 +1,3 @@
+# Vendored third-party bundles: not our code, pollutes the graph
+# (3d-force-graph.min.js alone injects ~3000 minified junk nodes).
+frontend/vendor/
