@@ -1,0 +1,10 @@
+# graphify outputs (this project only views graphs, it does not own one)
+graphify-out/
+graph.json
+
+# python
+__pycache__/
+*.pyc
+
+# local scratch
+*.log

@@ -1,0 +1,183 @@
+:root {
+  --bg: #1e2124;
+  --panel: #282b30;
+  --panel-2: #36393e;
+  --border: #36393e;
+  --text: #dcddde;
+  --muted: #8a8f98;
+  --accent: #7289da;
+  --green: #43b581;
+  --orange: #faa61a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 system-ui, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+#scene { position: fixed; inset: 0; }
+
+/* ---- top bar ---- */
+#topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+
+#brand { font-weight: 600; letter-spacing: .02em; }
+
+#graph-select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  max-width: 260px;
+}
+
+#search {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  width: 240px;
+}
+#search:focus { outline: 1px solid var(--accent); }
+
+#stats { margin-left: auto; white-space: nowrap; }
+#conn { min-width: 70px; text-align: right; }
+.muted { color: var(--muted); }
+
+/* ---- shared panel chrome ---- */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.panel-head button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.panel-head button:hover { color: var(--text); }
+.panel-scroll { overflow-y: auto; scrollbar-width: thin; }
+
+/* ---- side panel (node details) ---- */
+#side-panel {
+  position: fixed;
+  top: 42px;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 9;
+}
+#side-panel.hidden { display: none; }
+#sp-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sp-body { padding: 10px; flex: 1; }
+
+.kv { margin: 0 0 10px; }
+.kv dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.kv dd { margin: 1px 0 7px; word-break: break-all; }
+
+.neigh {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 8px;
+  margin: 0 0 4px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.neigh:hover { border-color: var(--accent); }
+.neigh .rel { color: var(--muted); font-size: 11px; }
+
+/* ---- activity feed ---- */
+#feed {
+  position: fixed;
+  left: 12px;
+  bottom: 34px;
+  width: 340px;
+  max-height: 42vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  z-index: 9;
+}
+#feed.collapsed #feed-list { display: none; }
+#feed-list { padding: 6px; }
+
+.card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 0 0 6px;
+  cursor: pointer;
+}
+.card:hover { border-color: var(--accent); }
+.card .row1 { display: flex; align-items: center; gap: 6px; }
+.card .badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: #fff;
+}
+.badge.query   { background: var(--accent); }
+.badge.path    { background: var(--green); }
+.badge.explain { background: var(--orange); color: #1e2124; }
+.badge.update  { background: #5a6172; }
+.card .graph { color: var(--muted); font-size: 11px; }
+.card .time { margin-left: auto; color: var(--muted); font-size: 11px; }
+.card .q {
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.card .meta { margin-top: 2px; color: var(--muted); font-size: 11px; }
+
+/* ---- footer hint ---- */
+#hint {
+  position: fixed;
+  left: 14px;
+  bottom: 10px;
+  font-size: 11px;
+  z-index: 8;
+}

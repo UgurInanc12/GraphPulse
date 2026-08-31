@@ -1,0 +1,12 @@
+GraphPulse
+Copyright 2026 Ugur Inanc
+
+This product includes software developed as part of the GraphPulse project
+(https://github.com/UgurInanc12/GraphPulse).
+
+Bundled third-party software:
+
+- 3d-force-graph (https://github.com/vasturiano/3d-force-graph)
+  Copyright (c) 2017 Vasco Asturiano, MIT License.
+  Bundles three.js (https://threejs.org), Copyright (c) 2010-2026 three.js
+  authors, MIT License.

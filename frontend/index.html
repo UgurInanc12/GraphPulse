@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GraphPulse</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="topbar">
+  <span id="brand">GraphPulse</span>
+  <select id="graph-select" title="Graph"></select>
+  <input id="search" type="text" placeholder="Search node… (Enter)" autocomplete="off" spellcheck="false">
+  <span id="stats" class="muted"></span>
+  <span id="conn" class="muted" title="Event stream state">connecting</span>
+</header>
+
+<div id="scene"></div>
+
+<aside id="side-panel" class="hidden">
+  <div class="panel-head">
+    <span id="sp-title"></span>
+    <button id="sp-close" title="Close">×</button>
+  </div>
+  <div id="sp-body" class="panel-scroll"></div>
+</aside>
+
+<section id="feed">
+  <div class="panel-head">
+    <span>Activity</span>
+    <button id="feed-toggle" title="Collapse">–</button>
+  </div>
+  <div id="feed-list" class="panel-scroll"></div>
+</section>
+
+<footer id="hint" class="muted">left-drag rotate · right-drag pan · wheel zoom · click node for details</footer>
+
+<script src="/vendor/3d-force-graph.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
