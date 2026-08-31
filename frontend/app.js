@@ -17,6 +17,8 @@ const SPAWN_MS = 1400;
 const FLASH_MS = 2600;
 const MAX_FEED = 60;
 const FREEZE_ABOVE = 2500;   // physics freeze threshold (node count)
+const FREEZE_EDGES = 4000;   // physics freeze threshold (edge count)
+const DEFAULT_GRAPH = "global";  // opens here, pinned to top of the selector
 
 const state = {
   gid: null,
@@ -189,7 +191,12 @@ function idOf(x) { return typeof x === "object" && x !== null ? x.id : x; }
 
 function tunePhysics() {
   const n = state.nodes.length;
-  if (n > FREEZE_ABOVE) {
+  const e = state.edges.length;
+  // Cost is driven by edges as much as nodes: the aggregate overview has few
+  // nodes but very dense weighted links, so gate on both. Freezing means the
+  // layout is solved during warmup and the render loop stops re-simulating.
+  const heavy = n > FREEZE_ABOVE || e > FREEZE_EDGES || state.mode === "agg";
+  if (heavy) {
     state.frozen = true;
     Graph.nodeResolution(n > 10000 ? 4 : 6);
     Graph.warmupTicks(n > 10000 ? 60 : 100);
@@ -338,11 +345,19 @@ function updateStats() {
   $("#stats").textContent = label;
 }
 
+/* The merged global graph is the default view, so it is pinned to the top of
+ * the selector instead of sorting alphabetically into the middle. */
+function orderGraphs(graphs) {
+  const global = graphs.filter((g) => g.id === DEFAULT_GRAPH);
+  const rest = graphs.filter((g) => g.id !== DEFAULT_GRAPH);
+  return [...global, ...rest];
+}
+
 function refreshSelect(graphs) {
   const sel = $("#graph-select");
   const cur = state.gid;
   sel.innerHTML = "";
-  for (const g of graphs) {
+  for (const g of orderGraphs(graphs)) {
     const opt = document.createElement("option");
     opt.value = g.id;
     opt.textContent = `${g.id} (${g.nodes.toLocaleString()})`;
@@ -469,7 +484,8 @@ function connect() {
     const graphs = JSON.parse(e.data).graphs || [];
     refreshSelect(graphs);
     if (!state.gid && graphs.length) {
-      const prefer = graphs.find((g) => g.id !== "global") || graphs[0];
+      // Open on the merged global graph (aggregated overview) by default.
+      const prefer = graphs.find((g) => g.id === DEFAULT_GRAPH) || graphs[0];
       loadGraph(prefer.id);
     }
   });
