@@ -31,7 +31,29 @@ No build step, no npm, no external Python packages. One stdlib server, one vendo
 python server.py --roots "D:/Hermes;D:/AI" --port 8123
 ```
 
-Open http://127.0.0.1:8123
+Open http://127.0.0.1:8123 . The viewer opens on the merged **global** graph
+(pinned to the top of the selector); pick any project from the dropdown to switch.
+
+### Windows: always on, with a desktop shortcut
+
+```
+cscript //nologo install-autostart.vbs
+```
+
+That installs two things for the current user:
+
+- **Desktop shortcut "GraphPulse"** - starts the server if it is not already
+  running, then opens http://127.0.0.1:8123/ in your browser.
+- **Startup entry** - launches the server windowless at every login
+  (`graphpulse.vbs /nobrowser`), so the site is always available.
+
+Both run through `graphpulse.vbs`, which uses `pythonw.exe` (no console window),
+refuses to start a second copy if the port already answers, and waits for the
+server to accept connections before opening the browser. Remove both with
+`cscript //nologo install-autostart.vbs /uninstall`.
+
+Set `GRAPHPULSE_PYTHONW` if you want to pin a specific interpreter; otherwise the
+launcher probes uv-managed Pythons, then common install locations, then `PATH`.
 
 ### See live reads
 
