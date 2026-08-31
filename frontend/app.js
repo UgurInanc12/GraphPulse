@@ -316,8 +316,11 @@ function reallyRemove(ids) {
   pushData();
 }
 
-function applyRead(r) {
-  feedCard(r);
+/* Play the read animation for one event: flash the touched nodes and light up
+ * the edges between them. Deliberately does NOT touch the activity feed, so
+ * replaying an event by clicking its card cannot append a duplicate entry.
+ * The feed is a log of what the AI/RAG layer did, not of what the user clicked. */
+function playRead(r) {
   if (r.graph !== state.gid) return;
   const now = performance.now();
   const ids = state.mode === "agg" ? (r.agg_ids || []) : (r.node_ids || []);
@@ -334,6 +337,12 @@ function applyRead(r) {
     Graph.linkWidth(Graph.linkWidth());
     Graph.linkDirectionalParticles(Graph.linkDirectionalParticles());
   }, FLASH_MS);
+}
+
+/* A genuinely new read arrived over SSE: log it AND animate it. */
+function applyRead(r) {
+  feedCard(r);
+  playRead(r);
 }
 
 /* ---------- UI ---------- */
@@ -463,12 +472,21 @@ function feedCard(r) {
     `<span class="graph">${esc(r.graph || "")}</span><span class="time">${esc(time)}</span></div>` +
     `<div class="q">${esc(r.question || "")}</div>` +
     (meta.length ? `<div class="meta">${esc(meta.join(" · "))}</div>` : "");
+  // Clicking a card REPLAYS it: fly the camera in and re-run the animation.
+  // It must never call applyRead() (that would log the same event again) and
+  // never re-order the feed - the log stays in the order the AI produced it.
   card.addEventListener("click", async () => {
     if (r.graph && r.graph !== state.gid) await loadGraph(r.graph);
-    applyRead({ ...r, ts: undefined });
+    playRead(r);
     const pool = state.mode === "agg" ? (r.agg_ids || []) : (r.node_ids || []);
     const first = pool.find((id) => state.byId.has(id));
     if (first) focusNode(state.byId.get(first));
+    // mark which entry is being replayed
+    for (const el of list.querySelectorAll(".card.replaying")) {
+      el.classList.remove("replaying");
+    }
+    card.classList.add("replaying");
+    setTimeout(() => card.classList.remove("replaying"), FLASH_MS);
   });
   list.prepend(card);
   while (list.children.length > MAX_FEED) list.lastChild.remove();
